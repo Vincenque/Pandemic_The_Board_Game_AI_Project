@@ -1,1 +1,3 @@
 JOHANNESBURG should be at (1158, 774)
+
+Position to check pixels for moving screen vertically: 1600, 730
