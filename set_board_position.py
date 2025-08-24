@@ -336,6 +336,41 @@ def main():
     listener = keyboard.Listener(on_press=on_press)
     listener.start()
 
+    # --- NEW: initial center right-click + short scroll down (0.5s) ---
+    try:
+        center_x = SCREEN_WIDTH // 2
+        center_y = SCREEN_HEIGHT // 2
+        print(f"Performing initial right-click at center ({center_x},{center_y}) and scrolling down for 0.5s", flush=True)
+        # move to center and right-click
+        mouse_ctrl.position = (center_x, center_y)
+        time.sleep(0.02)
+        try:
+            mouse_ctrl.click(Button.right, 1)
+        except Exception:
+            # fallback: press/release
+            try:
+                mouse_ctrl.press(Button.right)
+                time.sleep(0.02)
+                mouse_ctrl.release(Button.right)
+            except Exception:
+                pass
+        time.sleep(0.05)
+        # scroll down for ~0.5 seconds in small steps, but break if aborted
+        scroll_duration = 0.5
+        end_time = time.time() + scroll_duration
+        while time.time() < end_time and not stop_event.is_set():
+            try:
+                # negative dy for scrolling down in most environments
+                mouse_ctrl.scroll(0, -1)
+            except Exception:
+                # ignore if scroll unsupported
+                pass
+            time.sleep(0.01)
+        time.sleep(0.05)
+    except Exception as e:
+        print(f"Initial center click/scroll failed: {e}", file=sys.stderr)
+    # --- END NEW SECTION ---
+
     try:
         # VERTICAL PHASE: repeat press-hold-drag-to-top until CHECK pixel unchanged
         loop_count = 0
