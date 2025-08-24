@@ -1,3 +1,11 @@
 JOHANNESBURG should be at (1158, 774)
 
 Position to check pixels for moving screen vertically: 1600, 730
+
+Buttons positions:
+Move (820, 1020)
+Treat (975, 1020)
+Cure (1120, 1020)
+Build (1260, 1018)
+Share (1415, 1020)
+Event (1550, 1020)
