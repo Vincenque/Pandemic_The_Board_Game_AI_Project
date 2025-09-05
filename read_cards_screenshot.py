@@ -1,4 +1,7 @@
+import os
+import sys
 import pyautogui
+from PIL import Image, ImageOps, ImageFilter
 
 # -------------------------
 # Configuration
@@ -10,6 +13,13 @@ dark_threshold = 30               # if R,G,B <= this -> consider dark -> set to 
 # Horizontal crop to apply before saving filtered.png (columns inclusive)
 crop_col_start = 87
 crop_col_end = 375  # inclusive
+
+# OCR configuration
+# If the Tesseract executable is not in PATH, uncomment and set the path below:
+# import pytesseract
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+OCR_LANG = "eng"        # set to "pol" or "pol+eng" if needed
+TESSERACT_PSM = "--psm 6"  # page segmentation mode
 
 # -------------------------
 # 1) Take screenshot -> find first row with target color -> vertical crop
@@ -31,6 +41,7 @@ for y in range(h_s):
 
 if found_row is None:
     print(f"No pixel with value {target_color} found in the screenshot. Aborting crop/filter.")
+    sys.exit(0)
 else:
     print(f"First row with pixel {target_color}: {found_row}")
 
@@ -53,11 +64,12 @@ else:
                 px[x, y] = (0, 0, 0)
 
     # -------------------------
-    # 3) Horizontal crop (columns crop_col_start..crop_col_end inclusive) and save filtered.png
+    # 3) Horizontal crop (columns crop_col_start..crop_col_end inclusive) and produce 'filtered' Image
     # -------------------------
     if crop_col_start >= w:
-        # Requested start column is outside image width: save full filtered image and warn
-        cropped.save("filtered.png")
+        # Requested start column is outside image width: keep full filtered image and warn
+        filtered = cropped
+        filtered.save("filtered.png")
         print(f"Warning: crop_col_start ({crop_col_start}) is outside image width ({w}). Saved full filtered image as filtered.png instead.")
     else:
         # Adjust end column if it exceeds width
@@ -72,3 +84,28 @@ else:
         filtered = cropped.crop((crop_col_start, 0, right, h))
         filtered.save("filtered.png")
         print(f"Filtered image cropped horizontally to columns {crop_col_start}..{crop_col_end_adj} and saved as filtered.png (size: {filtered.size}).")
+
+# -------------------------
+# 4) OCR on the in-memory 'filtered' Image (print text only)
+# -------------------------
+
+def preprocess_for_ocr(img: Image.Image) -> Image.Image:
+    # Work on the provided PIL Image
+    im = img.convert("L")                     # grayscale
+    im = ImageOps.autocontrast(im)            # autocorrect contrast
+    w0, h0 = im.size
+    # Upscale small images to improve OCR
+    if w0 < 1000:
+        scale = max(1, 1000 // w0)
+        im = im.resize((w0 * scale, h0 * scale), Image.LANCZOS)
+    im = im.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=3))
+    return im
+
+# Use the 'filtered' Image object we already have in memory
+pre = preprocess_for_ocr(filtered)
+ocr_text = pytesseract.image_to_string(pre, lang=OCR_LANG, config=TESSERACT_PSM)
+
+# Print OCR text to console
+print("\n--- OCR TEXT ---\n")
+print(ocr_text)
+print("\n--- END OF OCR TEXT ---\n")
