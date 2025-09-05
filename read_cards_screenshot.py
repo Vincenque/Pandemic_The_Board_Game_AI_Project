@@ -1,49 +1,74 @@
 import pyautogui
 
-# Define the capture area: (x, y, width, height)
-region = (0, 0, 400, 1080)
+# -------------------------
+# Configuration
+# -------------------------
+region = (0, 0, 400, 1080)        # (x, y, width, height) for screenshot
+target_color = (10, 90, 97)       # color to find the first row
+dark_threshold = 30               # if R,G,B <= this -> consider dark -> set to (0,0,0)
 
-# Take a screenshot of the defined region
+# Horizontal crop to apply before saving filtered.png (columns inclusive)
+crop_col_start = 87
+crop_col_end = 375  # inclusive
+
+# -------------------------
+# 1) Take screenshot -> find first row with target color -> vertical crop
+# -------------------------
 screenshot = pyautogui.screenshot(region=region)
-
-# Ensure image is in RGB mode
 screenshot = screenshot.convert("RGB")
 
-# Target color to find the first row
-target_color = (10, 90, 97)
-
-# Search for the first row containing the target color
 found_row = None
-pixels = screenshot.load()
+s_pixels = screenshot.load()
+w_s, h_s = screenshot.size
 
-for y in range(screenshot.height):
-    for x in range(screenshot.width):
-        if pixels[x, y] == target_color:
+for y in range(h_s):
+    for x in range(w_s):
+        if s_pixels[x, y] == target_color:
             found_row = y
             break
     if found_row is not None:
         break
 
-if found_row is not None:
+if found_row is None:
+    print(f"No pixel with value {target_color} found in the screenshot. Aborting crop/filter.")
+else:
     print(f"First row with pixel {target_color}: {found_row}")
-    # Crop the image from the found row down to the bottom
-    cropped = screenshot.crop((0, found_row, screenshot.width, screenshot.height))
+
+    # Crop vertically from found_row to the bottom
+    cropped = screenshot.crop((0, found_row, w_s, h_s))
     cropped.save("cropped.png")
     print("Cropped image saved as cropped.png")
 
-    # Load pixels of the cropped image and replace dark pixels with black
+    # -------------------------
+    # 2) Replace dark pixels (R,G,B <= dark_threshold) with pure black
+    # -------------------------
     cropped = cropped.convert("RGB")
     px = cropped.load()
-    w, h = cropped.width, cropped.height
+    w, h = cropped.size
 
     for y in range(h):
         for x in range(w):
             r, g, b = px[x, y]
-            # jeśli wszystkie składowe mieszczą się w przedziale 0..30 (włącznie)
-            if 0 <= r <= 30 and 0 <= g <= 30 and 0 <= b <= 30:
+            if 0 <= r <= dark_threshold and 0 <= g <= dark_threshold and 0 <= b <= dark_threshold:
                 px[x, y] = (0, 0, 0)
 
-    cropped.save("filtered.png")
-    print("Filtered image saved as filtered.png")
-else:
-    print(f"No pixel with value {target_color} found.")
+    # -------------------------
+    # 3) Horizontal crop (columns crop_col_start..crop_col_end inclusive) and save filtered.png
+    # -------------------------
+    if crop_col_start >= w:
+        # Requested start column is outside image width: save full filtered image and warn
+        cropped.save("filtered.png")
+        print(f"Warning: crop_col_start ({crop_col_start}) is outside image width ({w}). Saved full filtered image as filtered.png instead.")
+    else:
+        # Adjust end column if it exceeds width
+        if crop_col_end >= w:
+            print(f"Warning: crop_col_end ({crop_col_end}) exceeds image width ({w}). Adjusting to {w-1}.")
+            crop_col_end_adj = w - 1
+        else:
+            crop_col_end_adj = crop_col_end
+
+        # PIL crop box uses (left, upper, right, lower) with right exclusive -> use crop_col_end_adj + 1
+        right = crop_col_end_adj + 1
+        filtered = cropped.crop((crop_col_start, 0, right, h))
+        filtered.save("filtered.png")
+        print(f"Filtered image cropped horizontally to columns {crop_col_start}..{crop_col_end_adj} and saved as filtered.png (size: {filtered.size}).")
