@@ -5,16 +5,16 @@ import pytesseract
 import pyautogui
 from PIL import Image, ImageOps, ImageFilter
 
-# Top and bottom values (y measured from top of screen)
-TOP = 100
-BOTTOM = 123
+# Index of rows where to look for infection cubes values
+TOP_INFECTION_CUBES = 100
+BOTTOM_INFECTION_CUBES = 123
 
-# Regions are (left, top, width, height).
+# Regions are (left, TOP_INFECTION_CUBES, width, height).
 REGIONS = [
-    (1275, TOP, 1307 - 1275, BOTTOM - TOP),  # region 1: x 1275..1307, y TOP..BOTTOM
-    (1350, TOP, 1378 - 1350, BOTTOM - TOP),  # region 2: x 1350..1378
-    (1421, TOP, 1453 - 1421, BOTTOM - TOP),  # region 3: x 1421..1453
-    (1491, TOP, 1522 - 1491, BOTTOM - TOP),  # region 4: x 1491..1522
+    (1275, TOP_INFECTION_CUBES, 1307 - 1275, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 1: Yellow cubes
+    (1350, TOP_INFECTION_CUBES, 1378 - 1350, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 2: Black cubes
+    (1421, TOP_INFECTION_CUBES, 1453 - 1421, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 3: Red cubes
+    (1491, TOP_INFECTION_CUBES, 1522 - 1491, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 4: Blue cubes
 ]
 
 # Preprocessing parameters
