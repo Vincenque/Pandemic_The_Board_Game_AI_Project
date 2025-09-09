@@ -2,6 +2,7 @@ import os
 import sys
 import pyautogui
 from PIL import Image, ImageOps, ImageFilter
+import pytesseract
 
 # -------------------------
 # Configuration
@@ -15,9 +16,6 @@ crop_col_start = 87
 crop_col_end = 375  # inclusive
 
 # OCR configuration
-# If the Tesseract executable is not in PATH, uncomment and set the path below:
-# import pytesseract
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 OCR_LANG = "eng"        # set to "pol" or "pol+eng" if needed
 TESSERACT_PSM = "--psm 6"  # page segmentation mode
 
