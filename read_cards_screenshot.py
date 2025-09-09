@@ -8,7 +8,7 @@ import pytesseract
 # Configuration
 # -------------------------
 region = (0, 0, 400, 1080)        # (x, y, width, height) for screenshot
-target_color = (10, 90, 97)       # color to find the first row
+target_color = (1, 50, 55)       # color to find the first row
 dark_threshold = 30               # if R,G,B <= this -> consider dark -> set to (0,0,0)
 
 # Horizontal crop to apply before saving filtered.png (columns inclusive)
