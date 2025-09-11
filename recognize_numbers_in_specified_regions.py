@@ -9,13 +9,17 @@ from PIL import Image, ImageOps, ImageFilter
 TOP_INFECTION_CUBES = 8
 BOTTOM_INFECTION_CUBES = 33
 
-# Regions are (left, TOP_INFECTION_CUBES, width, height).
+# Regions are (left, top, width, height).
 REGIONS = [
     (1275, TOP_INFECTION_CUBES, 1307 - 1275, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 1: Yellow cubes
     (1350, TOP_INFECTION_CUBES, 1378 - 1350, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 2: Black cubes
     (1421, TOP_INFECTION_CUBES, 1453 - 1421, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 3: Red cubes
-    (1491, TOP_INFECTION_CUBES, 1522 - 1491, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 4: Blue cubes
+    (1491, TOP_INFECTION_CUBES, 1522 - 1491, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 4: Blue cube
+    (750, 20, 776 - 750, 58 - 20),  # region 5: Cards of infected cities (special filtering)
 ]
+
+# index of the special region (last one)
+INFECTED_CITIES_CARDS_INDEX = len(REGIONS) - 1
 
 # Preprocessing parameters
 UPSCALE = 3
@@ -69,12 +73,26 @@ def try_ocr_best(pil_img):
 
 def main():
     results = []
-    for region in REGIONS:
+    for i, region in enumerate(REGIONS):
         try:
             shot = pyautogui.screenshot(region=region)
         except Exception:
             results.append(None)
             continue
+
+        # If this is infected cities cards region, then convert all non-white pixels to black.
+        if i == INFECTED_CITIES_CARDS_INDEX:
+            try:
+                shot = shot.convert("RGB")
+                w, h = shot.size
+                px = shot.load()
+                for x in range(w):
+                    for y in range(h):
+                        if px[x, y] != (255, 255, 255):
+                            px[x, y] = (0, 0, 0)
+            except Exception:
+                # if special filtering fails, continue with the original shot
+                pass
 
         try:
             proc = preprocess_image(shot)
