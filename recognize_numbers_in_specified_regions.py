@@ -6,20 +6,20 @@ import pyautogui
 from PIL import Image, ImageOps, ImageFilter
 
 # Index of rows where to look for infection cubes values
-TOP_INFECTION_CUBES = 8
+TOP_INFECTION_CUBES = 12
 BOTTOM_INFECTION_CUBES = 33
 
 # Regions are (left, top, width, height).
 REGIONS = [
-    (1275, TOP_INFECTION_CUBES, 1307 - 1275, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 1: Yellow cubes
-    (1350, TOP_INFECTION_CUBES, 1378 - 1350, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 2: Black cubes
-    (1421, TOP_INFECTION_CUBES, 1453 - 1421, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 3: Red cubes
-    (1491, TOP_INFECTION_CUBES, 1522 - 1491, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # region 4: Blue cube
-    (750, 20, 776 - 750, 58 - 20),  # region 5: Cards of infected cities (special filtering)
+    (484, 20, 535 - 484, 58 - 20),  # Number of cities cards left
+    (743, 20, 784 - 743, 58 - 20),  # Number of infected cities cards
+    (907, TOP_INFECTION_CUBES, 936 - 907, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Infection rate
+    (1118, TOP_INFECTION_CUBES, 1144 - 1118, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Number of outbreaks
+    (1275, TOP_INFECTION_CUBES, 1307 - 1275, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Yellow cubes
+    (1350, TOP_INFECTION_CUBES, 1378 - 1350, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Black cubes
+    (1421, TOP_INFECTION_CUBES, 1453 - 1421, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Red cubes
+    (1491, TOP_INFECTION_CUBES, 1522 - 1491, BOTTOM_INFECTION_CUBES - TOP_INFECTION_CUBES),  # Blue cube
 ]
-
-# index of the special region (last one)
-INFECTED_CITIES_CARDS_INDEX = len(REGIONS) - 1
 
 # Preprocessing parameters
 UPSCALE = 3
@@ -80,19 +80,16 @@ def main():
             results.append(None)
             continue
 
-        # If this is infected cities cards region, then convert all non-white pixels to black.
-        if i == INFECTED_CITIES_CARDS_INDEX:
-            try:
-                shot = shot.convert("RGB")
-                w, h = shot.size
-                px = shot.load()
-                for x in range(w):
-                    for y in range(h):
-                        if px[x, y] != (255, 255, 255):
-                            px[x, y] = (0, 0, 0)
-            except Exception:
-                # if special filtering fails, continue with the original shot
-                pass
+        shot = shot.convert("RGB")
+        w, h = shot.size
+        px = shot.load()
+        for x in range(w):
+            for y in range(h):
+                r, g, b = px[x, y]
+                if (r > 220 and g > 220 and b > 220) or px[x, y] == (162, 163, 163):
+                    px[x, y] = (255, 255, 255)
+                else:
+                    px[x, y] = (0, 0, 0)
 
         try:
             proc = preprocess_image(shot)
