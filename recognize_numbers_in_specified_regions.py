@@ -6,8 +6,8 @@ import pyautogui
 from PIL import Image, ImageOps, ImageFilter
 
 # Index of rows where to look for infection cubes values
-TOP_INFECTION_CUBES = 100
-BOTTOM_INFECTION_CUBES = 123
+TOP_INFECTION_CUBES = 8
+BOTTOM_INFECTION_CUBES = 33
 
 # Regions are (left, TOP_INFECTION_CUBES, width, height).
 REGIONS = [
