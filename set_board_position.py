@@ -153,59 +153,60 @@ def main():
     # Set screen ready
     center_rightclick_scroll_and_drag_up()
 
-    # Capture only the horizontal strip spanning full width=1920.
-    screenshot_strip = capture_horizontal_strip(y_top=775, y_bottom=795, width=1920)
 
-    # Filter strip
-    filtered_strip = filter_image(screenshot_strip)
+    for attempt in range(2):    
+        # Capture only the horizontal strip spanning full width=1920.
+        screenshot_strip = capture_horizontal_strip(y_top=775, y_bottom=795, width=1920)
 
-    # Compute initial correlation and best-match metrics before any drag.
-    corr, tpl_shape, img_shape = compute_normalized_cross_correlation(reference_img, filtered_strip)
+        # Filter strip
+        filtered_strip = filter_image(screenshot_strip)
 
-    # Compute numeric best-match info
-    best_idx = np.unravel_index(np.argmax(corr), corr.shape)
-    best_row, best_col = int(best_idx[0]), int(best_idx[1])
-    best_value = float(corr[best_row, best_col])
+        # Compute initial correlation and best-match metrics before any drag.
+        corr, tpl_shape, img_shape = compute_normalized_cross_correlation(reference_img, filtered_strip)
 
-    th, tw = tpl_shape
-    ih, iw = img_shape
+        # Compute numeric best-match info
+        best_idx = np.unravel_index(np.argmax(corr), corr.shape)
+        best_row, best_col = int(best_idx[0]), int(best_idx[1])
+        best_value = float(corr[best_row, best_col])
 
-    match_center_x = best_col + tw / 2.0
-    match_center_y = best_row + th / 2.0
-    image_center_x = iw / 2.0
-    image_center_y = ih / 2.0
+        th, tw = tpl_shape
+        ih, iw = img_shape
 
-    dx = match_center_x - image_center_x
-    dy = match_center_y - image_center_y
+        match_center_x = best_col + tw / 2.0
+        match_center_y = best_row + th / 2.0
+        image_center_x = iw / 2.0
+        image_center_y = ih / 2.0
 
-    # Print initial correlation and offsets.
-    print(f"Best correlation value: {best_value:.6f}")
-    print(f"Best match top-left position in strip (x, y): ({best_col}, {best_row})")
-    print(f"Match center (x, y) in strip coords: ({match_center_x:.1f}, {match_center_y:.1f})")
-    print(f"Strip center (x, y): ({image_center_x:.1f}, {image_center_y:.1f})")
-    print(f"Center offset (dx, dy) in pixels: ({dx:.1f}, {dy:.1f})")
+        dx = match_center_x - image_center_x
+        dy = match_center_y - image_center_y
 
-    # Example start cursor position (x, y) where user wants to place cursor before holding LMB.
-    start_cursor_x = 1000
-    start_cursor_y = 100
+        # Print initial correlation and offsets.
+        print(f"Best correlation value: {best_value:.6f}")
+        print(f"Best match top-left position in strip (x, y): ({best_col}, {best_row})")
+        print(f"Match center (x, y) in strip coords: ({match_center_x:.1f}, {match_center_y:.1f})")
+        print(f"Strip center (x, y): ({image_center_x:.1f}, {image_center_y:.1f})")
+        print(f"Center offset (dx, dy) in pixels: ({dx:.1f}, {dy:.1f})")
 
-    move_cursor(start_cursor_x, start_cursor_y)
+        # Example start cursor position (x, y) where user wants to place cursor before holding LMB.
+        start_cursor_x = 1000
+        start_cursor_y = 100
 
-    # Desired absolute horizontal pixel where the TEMPLATE CENTER should end up.
-    desired_center_x = 1030
+        move_cursor(start_cursor_x, start_cursor_y)
 
-    # Current match center in strip coordinates (pixels from left of strip)
-    current_center_x = match_center_x
+        # Desired absolute horizontal pixel where the TEMPLATE CENTER should end up.
+        desired_center_x = 1030
 
-    # Compute needed horizontal move (positive -> move right)
-    move_needed = desired_center_x - current_center_x
-    dx_pixels = int(round(move_needed))
+        # Current match center in strip coordinates (pixels from left of strip)
+        current_center_x = match_center_x
 
-    if dx_pixels != 0:
-        print(f"Performing mouse drag by dx = {dx_pixels} pixels (horizontal) to place template center at x={desired_center_x} from start ({start_cursor_x},{start_cursor_y}).")
-        drag_by(dx_pixels, 0, duration=0.25)
-    else:
-        print(f"Template already at desired horizontal center x={desired_center_x}; no drag performed.")
+        # Compute needed horizontal move (positive -> move right)
+        move_needed = desired_center_x - current_center_x
+        dx_pixels = int(round(move_needed))
 
+        if dx_pixels != 0:
+            print(f"Performing mouse drag by dx = {dx_pixels} pixels (horizontal) to place template center at x={desired_center_x} from start ({start_cursor_x},{start_cursor_y}).")
+            drag_by(dx_pixels, 0, duration=0.25)
+        else:
+            print(f"Template already at desired horizontal center x={desired_center_x}; no drag performed.")
 if __name__ == "__main__":
     main()
