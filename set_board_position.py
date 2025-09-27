@@ -115,6 +115,31 @@ def compute_normalized_cross_correlation(template_img, image_img, eps=1e-10):
     corr = num / (denom + eps)
     return corr, (th, tw), (ih, iw)
 
+
+# Right-click the center of a screen (screen_w x screen_h), scroll the mouse wheel down for approximately scroll_time seconds,
+# then hold left mouse button at the center and drag the cursor to the top (y=0).
+def center_rightclick_scroll_and_drag_up(screen_w=1920, screen_h=1080, scroll_time=0.5, scroll_step=-1000, step_delay=0.01, drag_duration=0.25):
+    import time
+    import pyautogui
+
+    pyautogui.FAILSAFE = False
+
+    cx = int(screen_w // 2)
+    cy = int(screen_h // 2)
+
+    pyautogui.moveTo(cx, cy)
+    pyautogui.click(button='right')
+
+    end = time.perf_counter() + float(scroll_time)
+    while time.perf_counter() < end:
+        pyautogui.scroll(scroll_step)
+        time.sleep(step_delay)
+
+    pyautogui.moveTo(cx, cy)
+    pyautogui.mouseDown(button='left')
+    pyautogui.moveTo(cx, 0, duration=drag_duration)
+    pyautogui.mouseUp(button='left')
+
 def main():
     script_dir = get_script_dir()
     pictures_dir = os.path.join(script_dir, "Pictures")
@@ -124,6 +149,9 @@ def main():
     input_name = "JOHANNESBURG_filtered.png"
     input_path = os.path.join(pictures_dir, input_name)
     reference_img = load_image(input_path)
+
+    # Set screen ready
+    center_rightclick_scroll_and_drag_up()
 
     # Capture only the horizontal strip spanning full width=1920.
     screenshot_strip = capture_horizontal_strip(y_top=775, y_bottom=795, width=1920)
