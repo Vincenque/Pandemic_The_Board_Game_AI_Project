@@ -141,6 +141,11 @@ def center_rightclick_scroll_and_drag_up(screen_w=1920, screen_h=1080, scroll_ti
     pyautogui.mouseUp(button='left')
 
 def main():
+    # Minimze top bar
+    x = 1185; y = 65
+    if pyautogui.pixelMatchesColor(x, y, (211, 0, 0), tolerance=0):
+        pyautogui.click(x, y, button='left')
+
     script_dir = get_script_dir()
     pictures_dir = os.path.join(script_dir, "Pictures")
     os.makedirs(pictures_dir, exist_ok=True)
