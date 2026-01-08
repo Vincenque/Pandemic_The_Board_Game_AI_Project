@@ -8,6 +8,10 @@ import os
 import glob
 import re
 import pytesseract
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks
+import datetime
+import sys
 
 # --- CONFIGURATION ---
 GAME_W = 1920
@@ -15,11 +19,12 @@ GAME_H = 1080
 INPUT_FOLDER = "captured_data"
 COORDS_FILE = "city_coordinates.json" 
 OUTPUT_FILE = os.path.join(INPUT_FOLDER, "combined_dataset.json")
+MODEL_FILE = "active_learning_model.keras"
 
-# Point to tesseract if not in PATH
-# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-# --- REGIONS DEFINITIONS ---
+ROI_SIZE = 70
+IMG_SHAPE = (ROI_SIZE, ROI_SIZE, 3)
+EPOCHS_INITIAL = 10
+EPOCHS_UPDATE = 5
 
 TOP_CUBES_Y = 12
 BOT_CUBES_Y = 33
@@ -36,10 +41,10 @@ BAR_REGIONS = [
 ]
 
 ACTIONS_REGION = {
-    "key": "actions_left",
-    "label": "Actions",
+    "key": "actions_taken",
+    "label": "Actions Taken",
     "region": (675, 980, 730 - 675, 1050 - 980),
-    "whitelist": "0123456789/"
+    "whitelist": "01234/"
 }
 
 COLORS_HSV = {
@@ -49,7 +54,20 @@ COLORS_HSV = {
     "gray":   ((0, 0, 0), (180, 255, 60)) 
 }
 
-# --- OCR HELPERS ---
+# --- LOGGING HELPER ---
+def log(msg):
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}")
+
+# --- KERAS CALLBACK FOR CLEAN LOGS ---
+class VerboseLogger(callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        loss = logs.get('loss', 0)
+        mae = logs.get('mae', 0)
+        log(f"Epoch {epoch+1}: loss={loss:.5f}, mae={mae:.5f}")
+
+# --- HELPERS ---
 
 def add_border(pil_img, border_size=10, color=0):
     w, h = pil_img.size
@@ -106,20 +124,30 @@ def run_smart_ocr(pil_crop, whitelist="0123456789"):
     for name, vimg in variants.items():
         pad_col = 255 if "inverted" in name else 0
         vimg_padded = add_border(vimg, 10, pad_col)
-        
         for cfg in configs:
             try:
                 raw = pytesseract.image_to_string(vimg_padded, config=cfg).strip()
                 clean = raw.replace(" ", "")
                 if clean: return clean
             except: pass
-            
     return ""
+
+def create_cnn_model():
+    model = models.Sequential()
+    model.add(layers.Conv2D(32, (3, 3), activation='relu', input_shape=IMG_SHAPE))
+    model.add(layers.MaxPooling2D((2, 2)))
+    model.add(layers.Conv2D(64, (3, 3), activation='relu'))
+    model.add(layers.MaxPooling2D((2, 2)))
+    model.add(layers.Flatten())
+    model.add(layers.Dense(64, activation='relu'))
+    model.add(layers.Dense(4)) 
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    return model
 
 class CombinedLabeler:
     def __init__(self, root):
         self.root = root
-        self.root.title("Pandemic AI - Ultimate Combined Labeler")
+        self.root.title("Pandemic AI - Active Learning Labeler")
         self.root.geometry("1600x900")
         
         self.groups = {} 
@@ -137,6 +165,9 @@ class CombinedLabeler:
         self.tool_value = 1
         self.display_colors = {"yellow": "#ffff00", "red": "#ff4444", "blue": "#4444ff", "gray": "#aaaaaa"}
 
+        self.model = None
+        self.is_model_trained = False
+
         if os.path.exists(COORDS_FILE):
             with open(COORDS_FILE, 'r') as f:
                 self.city_coords = json.load(f)
@@ -144,6 +175,21 @@ class CombinedLabeler:
         self.scan_directory()
         self.filter_existing_data()
         
+        if os.path.exists(MODEL_FILE):
+            log(f"Loading existing AI model from {MODEL_FILE}...")
+            try:
+                self.model = tf.keras.models.load_model(MODEL_FILE)
+                self.is_model_trained = True
+                log("Model loaded successfully.")
+            except Exception as e:
+                log(f"Error loading model: {e}. Will create new one.")
+                
+        if not self.is_model_trained and os.path.exists(OUTPUT_FILE):
+            log("No saved model found, but dataset exists. Training initial model...")
+            self.train_ai_model(initial=True)
+        elif not self.is_model_trained:
+            log("No model and no dataset. Starting in Heuristic mode.")
+
         if not self.sorted_timestamps:
             messagebox.showinfo("Done", "All groups processed!")
             root.destroy()
@@ -152,10 +198,74 @@ class CombinedLabeler:
         self.setup_ui()
         self.load_group(0)
 
+    def train_ai_model(self, initial=False):
+        if not os.path.exists(OUTPUT_FILE): return
+        with open(OUTPUT_FILE, 'r') as f: dataset = json.load(f)
+        if len(dataset) < 5:
+            log("Not enough data to train yet.")
+            return
+
+        X, y = [], []
+        log(f"Preparing training data from {len(dataset)} records...")
+        
+        data_slice = dataset if initial else dataset[-500:] 
+        
+        for entry in data_slice:
+            if not os.path.exists(entry['image']): continue
+            full_img = cv2.imread(entry['image'])
+            if full_img is None: continue
+            city_labels = entry['city_infections']
+            
+            for city_name, coords in self.city_coords.items():
+                if city_name not in city_labels: continue
+                cx, cy = int(coords[0]), int(coords[1])
+                half = ROI_SIZE // 2
+                y1, y2 = max(0, cy - half), min(GAME_H, cy + half)
+                x1, x2 = max(0, cx - half), min(GAME_W, cx + half)
+                crop = full_img[y1:y2, x1:x2]
+                if crop.shape[0] != ROI_SIZE or crop.shape[1] != ROI_SIZE:
+                    crop = cv2.resize(crop, (ROI_SIZE, ROI_SIZE))
+                crop = crop.astype('float32') / 255.0
+                c = city_labels[city_name]
+                X.append(crop)
+                y.append([c['yellow'], c['red'], c['blue'], c['gray']])
+        
+        if not X: return
+        if self.model is None: self.model = create_cnn_model()
+        
+        ep = EPOCHS_INITIAL if initial else EPOCHS_UPDATE
+        log(f"Training model on {len(X)} samples for {ep} epochs...")
+        
+        # Use custom verbose logger to avoid chaos
+        self.model.fit(np.array(X), np.array(y), epochs=ep, batch_size=32, verbose=0, callbacks=[VerboseLogger()])
+        self.model.save(MODEL_FILE)
+        self.is_model_trained = True
+        log("Training complete.")
+
+    def run_ai_prediction(self):
+        log("Running AI Prediction...")
+        full_img_bgr = cv2.cvtColor(np.array(self.pil_img), cv2.COLOR_RGB2BGR)
+        rois, names = [], []
+        
+        for name, coords in self.city_coords.items():
+            cx, cy = int(coords[0]), int(coords[1])
+            half = ROI_SIZE // 2
+            y1, y2 = max(0, cy - half), min(GAME_H, cy + half)
+            x1, x2 = max(0, cx - half), min(GAME_W, cx + half)
+            crop = full_img_bgr[y1:y2, x1:x2]
+            if crop.shape[0] != ROI_SIZE or crop.shape[1] != ROI_SIZE:
+                crop = cv2.resize(crop, (ROI_SIZE, ROI_SIZE))
+            rois.append(crop.astype('float32') / 255.0)
+            names.append(name)
+            
+        preds = self.model.predict(np.array(rois), verbose=0)
+        for i, name in enumerate(names):
+            cnt = np.maximum(np.round(preds[i]).astype(int), 0)
+            self.city_data[name] = {"yellow": int(cnt[0]), "red": int(cnt[1]), "blue": int(cnt[2]), "gray": int(cnt[3])}
+
     def scan_directory(self):
-        print("Scanning input folder...")
-        if not os.path.exists(INPUT_FOLDER):
-            os.makedirs(INPUT_FOLDER)
+        log("Scanning input folder...")
+        if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
         files = glob.glob(os.path.join(INPUT_FOLDER, "*.png"))
         self.groups = {}
         for fpath in files:
@@ -172,38 +282,28 @@ class CombinedLabeler:
         try:
             with open(OUTPUT_FILE, 'r') as f: existing = json.load(f)
             processed_ts = set(item.get('timestamp') for item in existing)
-            to_remove = []
-            for ts in self.groups:
-                if ts in processed_ts: to_remove.append(ts)
+            to_remove = [ts for ts in self.groups if ts in processed_ts]
             for ts in to_remove: del self.groups[ts]
             self.sorted_timestamps = sorted(self.groups.keys())
         except: pass
 
     def setup_ui(self):
-        # RIGHT SIDEBAR
         sidebar_outer = tk.Frame(self.root, width=420, bg="#ddd")
         sidebar_outer.pack(side=tk.RIGHT, fill=tk.Y)
-        
         sb_canvas = tk.Canvas(sidebar_outer, bg="#ddd")
         scrollbar = tk.Scrollbar(sidebar_outer, orient="vertical", command=sb_canvas.yview)
         self.sidebar = tk.Frame(sb_canvas, bg="#ddd")
-        
         self.sidebar.bind("<Configure>", lambda e: sb_canvas.configure(scrollregion=sb_canvas.bbox("all")))
         sb_canvas.create_window((0, 0), window=self.sidebar, anchor="nw")
         sb_canvas.configure(yscrollcommand=scrollbar.set)
-        
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         sb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # LEFT MAP
         map_frame = tk.Frame(self.root, bg="#222")
         map_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.map_canvas = tk.Canvas(map_frame, bg="#222")
         self.map_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # --- SIDEBAR CONTENT ---
-        
-        # 1. Info
         tk.Label(self.sidebar, text="--- BATCH CONTROL ---", font=("Arial", 11, "bold"), bg="#ddd").pack(pady=5)
         self.lbl_info = tk.Label(self.sidebar, text="...", bg="#ddd")
         self.lbl_info.pack()
@@ -211,59 +311,45 @@ class CombinedLabeler:
         nav_frame = tk.Frame(self.sidebar, bg="#ddd")
         nav_frame.pack(pady=5)
         tk.Button(nav_frame, text="Skip", command=self.next_group).pack(side=tk.LEFT, padx=5)
-        tk.Button(nav_frame, text="SAVE BATCH", command=self.save_batch, bg="#00cc00", fg="white", font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(nav_frame, text="SAVE & RETRAIN", command=self.save_batch, bg="#00cc00", fg="white", font=("Arial", 11, "bold")).pack(side=tk.LEFT, padx=5)
 
-        # 2. Paint Tool
         tk.Label(self.sidebar, text="--- MAP PAINT TOOL ---", font=("Arial", 11, "bold"), bg="#ddd").pack(pady=5)
-        tk.Label(self.sidebar, text="Keys: [Y]ellow [R]ed [B]lue [G]ray | [1][2][3][0]", bg="#ddd").pack()
         self.lbl_tool = tk.Label(self.sidebar, text="Tool: YELLOW [1]", font=("Arial", 12, "bold"), fg="#aaaa00", bg="#ddd")
         self.lbl_tool.pack(pady=5)
 
-        # 2b. VALUE BUTTONS
         val_frame = tk.Frame(self.sidebar, bg="#ddd")
         val_frame.pack(pady=2)
-        tk.Label(val_frame, text="Value:", bg="#ddd").pack(side=tk.LEFT)
         tk.Button(val_frame, text="1", width=3, command=lambda: self.set_val(1)).pack(side=tk.LEFT, padx=2)
         tk.Button(val_frame, text="2", width=3, command=lambda: self.set_val(2)).pack(side=tk.LEFT, padx=2)
         tk.Button(val_frame, text="3", width=3, command=lambda: self.set_val(3)).pack(side=tk.LEFT, padx=2)
         tk.Button(val_frame, text="0", width=3, command=lambda: self.set_val(0)).pack(side=tk.LEFT, padx=2)
 
-        # 2c. CLEAR BUTTONS
         clear_frame = tk.Frame(self.sidebar, bg="#ddd")
         clear_frame.pack(pady=5)
-        tk.Label(clear_frame, text="Clear All:", font=("Arial", 10), bg="#ddd").pack(side=tk.LEFT, padx=5)
-        
         tk.Button(clear_frame, text=" Y ", bg="#ffff00", fg="black", command=lambda: self.clear_color('yellow')).pack(side=tk.LEFT, padx=2)
         tk.Button(clear_frame, text=" R ", bg="#ff4444", fg="white", command=lambda: self.clear_color('red')).pack(side=tk.LEFT, padx=2)
         tk.Button(clear_frame, text=" B ", bg="#4444ff", fg="white", command=lambda: self.clear_color('blue')).pack(side=tk.LEFT, padx=2)
         tk.Button(clear_frame, text=" G ", bg="#666666", fg="white", command=lambda: self.clear_color('gray')).pack(side=tk.LEFT, padx=2)
 
-        # 3. SUPPLY MONITOR
-        tk.Label(self.sidebar, text="--- SUPPLY MONITOR (Map vs Supply) ---", font=("Arial", 11, "bold"), bg="#ddd").pack(pady=5)
+        tk.Label(self.sidebar, text="--- SUPPLY MONITOR ---", font=("Arial", 11, "bold"), bg="#ddd").pack(pady=5)
         supply_frame = tk.Frame(self.sidebar, bg="#eee", bd=1, relief=tk.SOLID)
         supply_frame.pack(fill=tk.X, padx=5, pady=5)
-        
         for i, color in enumerate(["yellow", "red", "blue", "gray"]):
             lbl = tk.Label(supply_frame, text=f"{color.title()}: 0 / 0", font=("Consolas", 11, "bold"), bg="#eee")
             lbl.grid(row=i//2, column=i%2, sticky="w", padx=10, pady=2)
             self.supply_labels[color] = lbl
 
-        # 4. Input Fields
         tk.Label(self.sidebar, text="--- SCREEN VALUES ---", font=("Arial", 11, "bold"), bg="#ddd").pack(pady=10)
         self.crop_labels = {} 
         self.create_entry_row(ACTIONS_REGION["key"], ACTIONS_REGION["label"])
         for key, label, _, _ in BAR_REGIONS:
             self.create_entry_row(key, label)
 
-        # --- BINDINGS ---
         self.map_canvas.bind("<Button-1>", self.on_map_click)
         self.map_canvas.bind("<Button-3>", self.on_map_right_click)
         self.map_canvas.bind("<Motion>", self.on_mouse_move)
-        
-        # SCROLL BINDINGS (RESTORED)
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
         self.root.bind_all("<Shift-MouseWheel>", self._on_shift_mousewheel)
-        
         self.root.bind('<Key>', self.handle_keypress)
 
         self.cursor_id = self.map_canvas.create_text(0,0, text="1", fill="yellow", font=("Arial",20,"bold"), state='hidden')
@@ -285,10 +371,7 @@ class CombinedLabeler:
         e.pack(side=tk.RIGHT)
 
     def handle_keypress(self, event):
-        focused_widget = self.root.focus_get()
-        if isinstance(focused_widget, tk.Entry):
-            return 
-
+        if isinstance(self.root.focus_get(), tk.Entry): return
         k = event.char.lower()
         if k == 'y': self.set_tool('yellow')
         elif k == 'r': self.set_tool('red')
@@ -311,13 +394,11 @@ class CombinedLabeler:
         self.current_idx = idx
         self.current_timestamp = self.sorted_timestamps[idx]
         self.current_file_list = self.groups[self.current_timestamp]
-        
         self.lbl_info.config(text=f"Group {idx+1}/{len(self.sorted_timestamps)}\nTS: {self.current_timestamp}\nImages: {len(self.current_file_list)}")
         
         img_path = self.current_file_list[0]
         self.cv_img = cv2.imread(img_path)
         self.pil_img = Image.open(img_path)
-        
         self.tk_map_img = ImageTk.PhotoImage(self.pil_img)
         self.map_canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_map_img)
         self.map_canvas.config(scrollregion=(0,0, GAME_W, GAME_H))
@@ -326,12 +407,17 @@ class CombinedLabeler:
         for city in self.city_coords:
             self.city_data[city] = {"yellow": 0, "red": 0, "blue": 0, "gray": 0}
             
-        self.run_heuristics()
+        if self.is_model_trained:
+            self.run_ai_prediction()
+        else:
+            self.run_heuristics()
+            
         self.run_ocr_bars()
         self.redraw_map_overlays()
         self.update_supply_monitor()
 
     def run_heuristics(self):
+        log("Running Heuristic Detection...")
         hsv = cv2.cvtColor(self.cv_img, cv2.COLOR_BGR2HSV)
         box_r = 35 
         for name, (cx, cy) in self.city_coords.items():
@@ -362,8 +448,13 @@ class CombinedLabeler:
         tk_disp = ImageTk.PhotoImage(disp)
         self.crop_labels[key].config(image=tk_disp, width=w, height=h)
         self.crop_labels[key].image = tk_disp
+        
         res = run_smart_ocr(crop, ACTIONS_REGION["whitelist"])
-        self.bar_data_vars[key].set(res)
+        match = re.search(r"(\d)", res)
+        if match:
+            self.bar_data_vars[key].set(match.group(1))
+        else:
+            self.bar_data_vars[key].set(res)
 
     def update_supply_monitor(self):
         map_totals = {"yellow": 0, "red": 0, "blue": 0, "gray": 0}
@@ -376,24 +467,16 @@ class CombinedLabeler:
         for color, total_on_map in map_totals.items():
             ocr_var = self.bar_data_vars[ocr_keys[color]]
             val_str = ocr_var.get().strip()
-            
             target_str = "?"
             fg_color = "black"
-            
             if val_str.isdigit():
                 supply_left = int(val_str)
                 expected_on_map = 24 - supply_left
                 target_str = str(expected_on_map)
-                
-                if total_on_map == expected_on_map:
-                    fg_color = "#00aa00" 
-                else:
-                    fg_color = "red" 
+                fg_color = "#00aa00" if total_on_map == expected_on_map else "red"
             
-            label_text = f"{color.title()}: {total_on_map} / {target_str}"
-            self.supply_labels[color].config(text=label_text, fg=fg_color)
+            self.supply_labels[color].config(text=f"{color.title()}: {total_on_map} / {target_str}", fg=fg_color)
 
-    # --- MAP INTERACTION ---
     def set_tool(self, color):
         self.tool_color = color
         self.update_tool_ui()
@@ -466,8 +549,9 @@ class CombinedLabeler:
         bar_data = {}
         for key, var in self.bar_data_vars.items():
             val = var.get().strip()
-            if key == "actions_left":
-                bar_data[key] = val
+            if key == "actions_taken":
+                if val.isdigit(): bar_data[key] = int(val)
+                else: bar_data[key] = None
             else:
                 if val.isdigit(): bar_data[key] = int(val)
                 else: bar_data[key] = None
@@ -486,11 +570,15 @@ class CombinedLabeler:
         if os.path.exists(OUTPUT_FILE):
             try:
                 with open(OUTPUT_FILE, 'r') as f: full_data = json.load(f)
-            except: pass
+            except:
+                pass
             
         full_data.extend(new_entries)
         with open(OUTPUT_FILE, 'w') as f: json.dump(full_data, f, indent=2)
-        print(f"Saved {len(new_entries)} images for TS {self.current_timestamp}")
+        
+        log(f"Saved {len(new_entries)} images. Retraining model...")
+        self.root.update()
+        self.train_ai_model(initial=False)
         self.next_group()
 
     def next_group(self):
